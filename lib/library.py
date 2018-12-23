@@ -11,11 +11,11 @@ from keras.models import Model
 from keras.layers import Activation, Dense, Dropout, Flatten, Input, Merge, Convolution1D, Convolution2D
 from keras.layers.normalization import BatchNormalization
 
-GLOBAL_PATH='/home/casp13/deepsf_3d/Github/test/DeepSF/';
+GLOBAL_PATH='/media/pilab/ssd_data/test/DeepSF/';
 
 feature_dir_global =GLOBAL_PATH+'/datasets/features/Feature_aa_ss_sa/'
 pssm_dir_global = GLOBAL_PATH+'/datasets/features/PSSM_Fea/'
-
+two_stream = False
 
 if not os.path.exists(feature_dir_global):
   print "Cuoldn't find folder ",feature_dir_global, " please setting it in the script ./lib/library.py"
@@ -208,9 +208,9 @@ def load_train_test_data_padding_with_interval(CV_dir, Interval,prefix,ktop_node
         
         print "Saving data  ",pickle_file
         # write python dict to a file
-        #output = open(pickle_file, 'wb') # dont save, release space
-        #pickle.dump(data_all_dict, output)
-        #output.close()
+        output = open(pickle_file, 'wb') # dont save, release space
+        pickle.dump(data_all_dict, output)
+        output.close()
     
     return data_all_dict
 
@@ -228,31 +228,76 @@ def DLS2F_construct_withaa_complex_win_filter_layer_opt(win_array,ktop_node,outp
     print "Setting win_array as ",win_array
     print "Setting use_bias as ",use_bias
     ########################################## set up model
-    DLS2F_input_shape =(None,aa_feature_num+ss_feature_num+sa_feature_num+pssm_feature_num)
-    filter_sizes=win_array
-    DLS2F_input = Input(shape=DLS2F_input_shape)
-    DLS2F_convs = []
-    for fsz in filter_sizes:
-        DLS2F_conv = DLS2F_input
-        for i in range(0,nb_layers):
-            DLS2F_conv = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv)
-        
-        DLS2F_pool = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv)
-        DLS2F_flatten = Flatten()(DLS2F_pool)
-        DLS2F_convs.append(DLS2F_flatten)
-    
-    if len(filter_sizes)>1:
-        DLS2F_out = Merge(mode='concat')(DLS2F_convs)
+
+    if(two_stream):
+        # TWO STREAM
+        DLS2F_input_shape_aa =(None,aa_feature_num)
+        DLS2F_input_shape_rest =(None,ss_feature_num+sa_feature_num+pssm_feature_num)
+        filter_sizes=win_array
+        DLS2F_input_aa = Input(shape=DLS2F_input_shape_aa, name='input_aa')
+        DLS2F_input_rest = Input(shape=DLS2F_input_shape_rest, name='input_rest')
+        DLS2F_convs = []
+        for fsz in filter_sizes:
+            DLS2F_conv_aa = DLS2F_input_aa
+            for i in range(0,nb_layers):
+                DLS2F_conv_aa = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv_aa)
+            
+            DLS2F_pool_aa = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_aa)
+            DLS2F_flatten_aa = Flatten()(DLS2F_pool_aa)
+            DLS2F_convs.append(DLS2F_flatten_aa)
+        # TWO STREAM
+        for fsz in filter_sizes:
+            DLS2F_conv_rest = DLS2F_input_rest
+            for i in range(0,nb_layers):
+                DLS2F_conv_rest = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv_rest)
+            
+            DLS2F_pool_rest = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_rest)
+            DLS2F_flatten_rest = Flatten()(DLS2F_pool_rest)
+            DLS2F_convs.append(DLS2F_flatten_rest)
+
+        # TWO STREAM
+        if len(filter_sizes)>1:
+            DLS2F_out = Merge(mode='concat')(DLS2F_convs)
+        else:
+            DLS2F_out = DLS2F_convs[0]  
+        # TWO STREAM
+        DLS2F_dense1_two_stream = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_out) # changed on 20170314 to check if can visualzie better
+        DLS2F_dropout1_two_stream = Dropout(0.2)(DLS2F_dense1_two_stream)
+        DLS2F_output_two_stream = Dense(output_dim=output_dim, init="he_normal", activation="softmax")(DLS2F_dropout1_two_stream)
+        DLS2F_ResCNN_two_stream = Model(input=[DLS2F_input_aa, DLS2F_input_rest], output=DLS2F_output_two_stream) 
+        DLS2F_ResCNN_two_stream.compile(loss="categorical_crossentropy", metrics=['accuracy'], optimizer=opt)
+        # TWO STREAM
+        DLS2F_ResCNN_two_stream.summary()
+        return DLS2F_ResCNN_two_stream
+
     else:
-        DLS2F_out = DLS2F_convs[0]  
-    
-    DLS2F_dense1 = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_out) # changed on 20170314 to check if can visualzie better
-    DLS2F_dropout1 = Dropout(0.2)(DLS2F_dense1)
-    DLS2F_output = Dense(output_dim=output_dim, init="he_normal", activation="softmax")(DLS2F_dropout1)
-    DLS2F_ResCNN = Model(input=[DLS2F_input], output=DLS2F_output) 
-    DLS2F_ResCNN.compile(loss="categorical_crossentropy", metrics=['accuracy'], optimizer=opt)
-    
-    return DLS2F_ResCNN
+        # DEFAULT DO NOT EDIT
+        DLS2F_input_shape =(None,aa_feature_num+ss_feature_num+sa_feature_num+pssm_feature_num)
+        filter_sizes=win_array
+        DLS2F_input = Input(shape=DLS2F_input_shape)
+        DLS2F_convs = []
+        for fsz in filter_sizes:
+            DLS2F_conv = DLS2F_input
+            for i in range(0,nb_layers):
+                DLS2F_conv = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv)
+            
+            DLS2F_pool = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv)
+            DLS2F_flatten = Flatten()(DLS2F_pool)
+            DLS2F_convs.append(DLS2F_flatten)
+        # DEFAULT DO NOT EDIT
+        if len(filter_sizes)>1:
+            DLS2F_out = Merge(mode='concat')(DLS2F_convs)
+        else:
+            DLS2F_out = DLS2F_convs[0]  
+        # DEFAULT DO NOT EDIT
+        DLS2F_dense1 = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_out) # changed on 20170314 to check if can visualzie better
+        DLS2F_dropout1 = Dropout(0.2)(DLS2F_dense1)
+        DLS2F_output = Dense(output_dim=output_dim, init="he_normal", activation="softmax")(DLS2F_dropout1)
+        DLS2F_ResCNN = Model(input=[DLS2F_input], output=DLS2F_output) 
+        DLS2F_ResCNN.compile(loss="categorical_crossentropy", metrics=['accuracy'], optimizer=opt)
+        # DEFAULT DO NOT EDIT
+        DLS2F_ResCNN.summary()
+        return DLS2F_ResCNN
 
 
 def DLS2F_train_complex_win_filter_layer_opt(data_all_dict_padding,testdata_all_dict_padding,train_list,val_list,test_list,CV_dir,model_prefix,epoch_outside,epoch_inside,seq_end,win_array,use_bias,hidden_type,nb_filters,nb_layers,opt,hidden_num,ktop_node):
@@ -595,7 +640,16 @@ def DLS2F_train_complex_win_filter_layer_opt(data_all_dict_padding,testdata_all_
             test_targets=Test_targets_keys[seq_len]
             print "Train shape: ",train_featuredata_all.shape, " in outside epoch ", epoch 
             print "Test shape: ",test_featuredata_all.shape, " in outside epoch ", epoch
-            DLS2F_CNN.fit([train_featuredata_all], train_targets, batch_size=50,nb_epoch=epoch_inside,  validation_data=([test_featuredata_all], test_targets), verbose=1)
+            if two_stream:
+                #train_featuredata_all = train_featuredata_all.reshape(train_featuredata_all.shape[0],train_featuredata_all.shape[1], train_featuredata_all.shape[2], 1)
+                #train_featuredata_all = np.asarray([train_featuredata_all[:,:,:20,:], train_featuredata_all[:,:,20:,:]])
+                #train_featuredata_all = train_featuredata_all.reshape(train_featuredata_all.shape[0],train_featuredata_all.shape[1], train_featuredata_all.shape[2])
+                DLS2F_CNN.fit([train_featuredata_all[:,:,:20], train_featuredata_all[:, :, 20:]], train_targets, 
+                    batch_size=50,nb_epoch=epoch_inside,  
+                    validation_data=([test_featuredata_all[:,:,:20], test_featuredata_all[:,:,20:]], test_targets), 
+                    verbose=1)
+            else:
+                DLS2F_CNN.fit([train_featuredata_all], train_targets, batch_size=50,nb_epoch=epoch_inside,  validation_data=([test_featuredata_all], test_targets), verbose=1)
             # serialize model to JSON
             model_json = DLS2F_CNN.to_json()
             print("Saved model to disk")
@@ -610,7 +664,8 @@ def DLS2F_train_complex_win_filter_layer_opt(data_all_dict_padding,testdata_all_
             print("Saved weight to disk") 
             DLS2F_CNN.save_weights(model_weight_out)
         
-        if epoch < epoch_outside*1/3:
+        #if epoch < epoch_outside*1/3:
+        if epoch%10 != 0:
             continue
         
         corrected_top1=0
@@ -630,12 +685,18 @@ def DLS2F_train_complex_win_filter_layer_opt(data_all_dict_padding,testdata_all_
             
             test_featuredata_all=Testlist_data_keys[pdb_name]
             test_targets=Testlist_targets_keys[pdb_name]
-            score, accuracy = DLS2F_CNN.evaluate([test_featuredata_all], test_targets, batch_size=10, verbose=0)
+            if two_stream:
+                score, accuracy = DLS2F_CNN.evaluate([test_featuredata_all[:,:,:20], test_featuredata_all[:,:,20:]], test_targets, batch_size=10, verbose=0)
+            else:
+                score, accuracy = DLS2F_CNN.evaluate([test_featuredata_all], test_targets, batch_size=10, verbose=0)
             all_cases +=1
             if accuracy == 1:
                 corrected +=1    
             
-            predict_val= DLS2F_CNN.predict([test_featuredata_all])
+            if two_stream:
+                predict_val= DLS2F_CNN.predict([test_featuredata_all[:,:,:20], test_featuredata_all[:,:,20:]])
+            else:
+                predict_val= DLS2F_CNN.predict([test_featuredata_all])
             top1_prediction=predict_val[0].argsort()[-1:][::-1]
             top5_prediction=predict_val[0].argsort()[-5:][::-1]
             top10_prediction=predict_val[0].argsort()[-10:][::-1]
@@ -679,7 +740,11 @@ def DLS2F_train_complex_win_filter_layer_opt(data_all_dict_padding,testdata_all_
             
             val_featuredata_all=Vallist_data_keys[pdb_name]
             val_targets=Vallist_targets_keys[pdb_name]
-            score, accuracy = DLS2F_CNN.evaluate([val_featuredata_all], val_targets, batch_size=10, verbose=0)
+
+            if two_stream:
+                score, accuracy = DLS2F_CNN.evaluate([val_featuredata_all[:,:,:20], val_featuredata_all[:,:,20:]], val_targets, batch_size=10, verbose=0)
+            else:
+                score, accuracy = DLS2F_CNN.evaluate([val_featuredata_all], val_targets, batch_size=10, verbose=0)
             del val_featuredata_all
             del val_targets
             all_cases +=1
@@ -714,7 +779,10 @@ def DLS2F_train_complex_win_filter_layer_opt(data_all_dict_padding,testdata_all_
             
             train_featuredata_all=Trainlist_data_keys[pdb_name]
             train_targets=Trainlist_targets_keys[pdb_name]
-            score, accuracy = DLS2F_CNN.evaluate([train_featuredata_all], train_targets, batch_size=10, verbose=0)
+            if two_stream:
+                score, accuracy = DLS2F_CNN.evaluate([train_featuredata_all[:,:,:20], train_featuredata_all[:,:,20:]], train_targets, batch_size=10, verbose=0)
+            else:
+                score, accuracy = DLS2F_CNN.evaluate([train_featuredata_all], train_targets, batch_size=10, verbose=0)
             del train_featuredata_all
             del train_targets
             all_cases +=1
