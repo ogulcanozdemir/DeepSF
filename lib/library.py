@@ -15,7 +15,10 @@ GLOBAL_PATH='/media/pilab/ssd_data/test/DeepSF/';
 
 feature_dir_global =GLOBAL_PATH+'/datasets/features/Feature_aa_ss_sa/'
 pssm_dir_global = GLOBAL_PATH+'/datasets/features/PSSM_Fea/'
-two_stream = False
+two_stream = True
+extra_fusion_FC = False
+pyramid_window_size = False
+pyramid_nb_filters = False
 
 if not os.path.exists(feature_dir_global):
   print "Cuoldn't find folder ",feature_dir_global, " please setting it in the script ./lib/library.py"
@@ -236,7 +239,8 @@ def DLS2F_construct_withaa_complex_win_filter_layer_opt(win_array,ktop_node,outp
         filter_sizes=win_array
         DLS2F_input_aa = Input(shape=DLS2F_input_shape_aa, name='input_aa')
         DLS2F_input_rest = Input(shape=DLS2F_input_shape_rest, name='input_rest')
-        DLS2F_convs = []
+        DLS2F_convs_aa = []
+        DLS2F_convs_rest = []
         for fsz in filter_sizes:
             DLS2F_conv_aa = DLS2F_input_aa
             for i in range(0,nb_layers):
@@ -244,7 +248,7 @@ def DLS2F_construct_withaa_complex_win_filter_layer_opt(win_array,ktop_node,outp
             
             DLS2F_pool_aa = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_aa)
             DLS2F_flatten_aa = Flatten()(DLS2F_pool_aa)
-            DLS2F_convs.append(DLS2F_flatten_aa)
+            DLS2F_convs_aa.append(DLS2F_flatten_aa)
         # TWO STREAM
         for fsz in filter_sizes:
             DLS2F_conv_rest = DLS2F_input_rest
@@ -253,13 +257,27 @@ def DLS2F_construct_withaa_complex_win_filter_layer_opt(win_array,ktop_node,outp
             
             DLS2F_pool_rest = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_rest)
             DLS2F_flatten_rest = Flatten()(DLS2F_pool_rest)
-            DLS2F_convs.append(DLS2F_flatten_rest)
+            DLS2F_convs_rest.append(DLS2F_flatten_rest)
 
-        # TWO STREAM
-        if len(filter_sizes)>1:
-            DLS2F_out = Merge(mode='concat')(DLS2F_convs)
+        if extra_fusion_FC:
+            # TWO STREAM
+            if len(filter_sizes)>1:
+                DLS2F_out_aa = Merge(mode='concat')(DLS2F_convs_aa)
+                DLS2F_out_rest = Merge(mode='concat')(DLS2F_convs_rest)
+                DLS2F_dense_aa_two_stream = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_out_aa) # changed on 20170314 to check if can visualzie better
+                DLS2F_dense_rest_two_stream = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_out_rest) # changed on 20170314 to check if can visualzie better
+                DLS2F_dropout_aa_two_stream = Dropout(0.2)(DLS2F_dense_aa_two_stream)
+                DLS2F_dropout_rest_two_stream = Dropout(0.2)(DLS2F_dense_rest_two_stream)
+                
+                DLS2F_out = Merge(mode='concat')([DLS2F_dropout_aa_two_stream, DLS2F_dropout_rest_two_stream])
+            else:
+                DLS2F_out = DLS2F_convs[0]  
+
         else:
-            DLS2F_out = DLS2F_convs[0]  
+            if len(filter_sizes)>1:
+                DLS2F_out = Merge(mode='concat')([DLS2F_convs_aa, DLS2F_convs_rest])
+            else:
+                DLS2F_out = DLS2F_convs[0]  
         # TWO STREAM
         DLS2F_dense1_two_stream = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_out) # changed on 20170314 to check if can visualzie better
         DLS2F_dropout1_two_stream = Dropout(0.2)(DLS2F_dense1_two_stream)
@@ -269,21 +287,43 @@ def DLS2F_construct_withaa_complex_win_filter_layer_opt(win_array,ktop_node,outp
         # TWO STREAM
         DLS2F_ResCNN_two_stream.summary()
         return DLS2F_ResCNN_two_stream
-
     else:
         # DEFAULT DO NOT EDIT
         DLS2F_input_shape =(None,aa_feature_num+ss_feature_num+sa_feature_num+pssm_feature_num)
         filter_sizes=win_array
         DLS2F_input = Input(shape=DLS2F_input_shape)
         DLS2F_convs = []
-        for fsz in filter_sizes:
-            DLS2F_conv = DLS2F_input
-            for i in range(0,nb_layers):
-                DLS2F_conv = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv)
-            
-            DLS2F_pool = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv)
-            DLS2F_flatten = Flatten()(DLS2F_pool)
-            DLS2F_convs.append(DLS2F_flatten)
+
+        if pyramid_window_size:
+
+            for fsz in filter_sizes:
+                DLS2F_conv = DLS2F_input
+                for i in range(0,nb_layers):
+
+                    if pyramid_nb_filters:
+                        DLS2F_conv = _conv_bn_relu1D(nb_filter=nb_filters-i, nb_row=fsz-i, subsample=1,use_bias=use_bias)(DLS2F_conv)
+                    else:
+                        DLS2F_conv = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz if i==0 else fsz/2, subsample=1,use_bias=use_bias)(DLS2F_conv)
+                
+                DLS2F_pool = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv)
+                DLS2F_flatten = Flatten()(DLS2F_pool)
+                DLS2F_convs.append(DLS2F_flatten)
+
+        else:
+
+            for fsz in filter_sizes:
+                DLS2F_conv = DLS2F_input
+                for i in range(0,nb_layers):
+
+                    if pyramid_nb_filters:
+                        DLS2F_conv = _conv_bn_relu1D(nb_filter=nb_filters-i, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv)
+                    else:
+                        DLS2F_conv = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv)
+                
+                DLS2F_pool = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv)
+                DLS2F_flatten = Flatten()(DLS2F_pool)
+                DLS2F_convs.append(DLS2F_flatten)
+
         # DEFAULT DO NOT EDIT
         if len(filter_sizes)>1:
             DLS2F_out = Merge(mode='concat')(DLS2F_convs)
