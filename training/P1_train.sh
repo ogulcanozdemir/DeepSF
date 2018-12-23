@@ -11,12 +11,13 @@
 ## Load Needed Modules
 #module load cuda/cuda-8.0
 
-GLOBAL_PATH='/home/casp13/deepsf_3d/Github/test/DeepSF/';
+GLOBAL_PATH='/media/pilab/ssd_data/test/DeepSF/';
 
 datadir=$GLOBAL_PATH/datasets/D1_SimilarityReduction_dataset
-outputdir=$GLOBAL_PATH/test
-echo "#################  Training on inter 15"
+outputdir=$GLOBAL_PATH/test/output_two_stream
+echo "TRAINING"
 ## Test Theano
-THEANO_FLAGS=floatX=float32,device=gpu python $GLOBAL_PATH/training/training_main.py 15 10 10 nadam '6_10' 500 30 50 3  $datadir $outputdir
+THEANO_FLAGS=floatX=float32,device=cuda $GLOBAL_PATH/../miniconda2/envs/theano/bin/python2.7 $GLOBAL_PATH/training/training_main.py 15 10 10 nadam '6_10' 500 30 50 3  $datadir $outputdir
+echo "EVALUATING"
 ## Test Theano
-THEANO_FLAGS=floatX=float32,device=gpu python $GLOBAL_PATH/training/predict_main.py  15 10 10 nadam '6_10' 500 30 50 3  $datadir $outputdir
+THEANO_FLAGS=floatX=float32,device=cuda $GLOBAL_PATH/../miniconda2/envs/theano/bin/python2.7 $GLOBAL_PATH/training/predict_main.py  15 10 10 nadam '6_10' 500 30 50 3  $datadir $outputdir
