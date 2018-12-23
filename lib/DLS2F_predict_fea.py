@@ -12,6 +12,7 @@ from keras.models import Model
 from keras.layers import Activation, Dense, Dropout, Flatten, Input, Merge, Convolution1D
 from keras.layers.normalization import BatchNormalization
 
+two_stream = False
 
 def import_DLS2FSVM(filename, delimiter='\t', delimiter2=' ',comment='>',skiprows=0, start=0, end = 0,target_col = 1, dtype=np.float32):
     # Open a file
@@ -76,7 +77,6 @@ if __name__ == '__main__':
             print 'please input the right parameters: list, model, weight, kmax'
             sys.exit(1)
     
-    
     test_list=sys.argv[1] 
     model_file=sys.argv[2] 
     model_weight=sys.argv[3]
@@ -98,7 +98,10 @@ if __name__ == '__main__':
     print "######## Loading existing weights ",model_weight;
     DLS2F_CNN.load_weights(model_weight)
     DLS2F_CNN.compile(loss="categorical_crossentropy", metrics=['accuracy'], optimizer="nadam")
-    get_flatten_layer_output = K.function([DLS2F_CNN.layers[0].input, K.learning_phase()],[DLS2F_CNN.layers[-3].output]) # input to flatten layer
+    #if(two_stream):
+    #    get_flatten_layer_output = K.function([DLS2F_CNN.layers[0].input, K.learning_phase()],[DLS2F_CNN.layers[-3].output]) # input to flatten layer
+    #else:
+    #    get_flatten_layer_output = K.function([DLS2F_CNN.layers[0].input, K.learning_phase()],[DLS2F_CNN.layers[-3].output]) # input to flatten layer
     print "Start loading data"
     Testlist_data_keys = dict()
     Testlist_targets_keys = dict()
@@ -184,10 +187,18 @@ if __name__ == '__main__':
         val_featuredata_all=Testlist_data_keys[pdb_name]
         val_targets=Testlist_targets_keys[pdb_name] 
         
-        predict_val= DLS2F_CNN.predict([val_featuredata_all])
-        hidden_feature= get_flatten_layer_output([val_featuredata_all,1])[0] ## output in train mode = 1 https://keras.io/getting-started/faq/
-        predict_out = Resultsdir+'/'+pdb_name+'.prediction'
-        hidden_feature_out = Resultsdir+'/'+pdb_name+'.hidden_feature'
-        np.savetxt(predict_out,predict_val,delimiter='\t')
-        np.savetxt(hidden_feature_out,hidden_feature,delimiter='\t')
+        if(two_stream):
+            predict_val= DLS2F_CNN.predict([val_featuredata_all[:,:,:20],val_featuredata_all[:,:,20:]])
+            #hidden_feature= get_flatten_layer_output([[val_featuredata_all[:,:,:20],val_featuredata_all[:,:,20:]],1])[0] ## output in train mode = 1 https://keras.io/getting-started/faq/
+            predict_out = Resultsdir+'/'+pdb_name+'.prediction'
+            hidden_feature_out = Resultsdir+'/'+pdb_name+'.hidden_feature'
+            np.savetxt(predict_out,predict_val,delimiter='\t')
+            #np.savetxt(hidden_feature_out,hidden_feature,delimiter='\t')
+        else:
+            predict_val= DLS2F_CNN.predict([val_featuredata_all])
+            #hidden_feature= get_flatten_layer_output([val_featuredata_all,1])[0] ## output in train mode = 1 https://keras.io/getting-started/faq/
+            predict_out = Resultsdir+'/'+pdb_name+'.prediction'
+            hidden_feature_out = Resultsdir+'/'+pdb_name+'.hidden_feature'
+            np.savetxt(predict_out,predict_val,delimiter='\t')
+            #np.savetxt(hidden_feature_out,hidden_feature,delimiter='\t')
         
