@@ -16,6 +16,7 @@ GLOBAL_PATH='/media/pilab/ssd_data/test/DeepSF/';
 feature_dir_global =GLOBAL_PATH+'/datasets/features/Feature_aa_ss_sa/'
 pssm_dir_global = GLOBAL_PATH+'/datasets/features/PSSM_Fea/'
 two_stream = True
+extra_fusion_CONV = True
 extra_fusion_FC = False
 pyramid_window_size = False
 pyramid_nb_filters = False
@@ -94,7 +95,7 @@ class K_max_pooling1d(Layer):
 def _conv_bn_relu1D(nb_filter, nb_row, subsample,use_bias=True):
     def f(input):
         conv = Convolution1D(nb_filter=nb_filter, filter_length=nb_row, subsample_length=subsample,bias=use_bias,
-                             init="he_normal", activation='relu', border_mode="same")(input)
+                             init="he_normal", activation='linear', border_mode="same")(input)
         norm = BatchNormalization(mode=0, axis=2)(conv)
         return Activation("relu")(norm)
     
@@ -245,19 +246,26 @@ def DLS2F_construct_withaa_complex_win_filter_layer_opt(win_array,ktop_node,outp
             DLS2F_conv_aa = DLS2F_input_aa
             for i in range(0,nb_layers):
                 DLS2F_conv_aa = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv_aa)
-            
-            DLS2F_pool_aa = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_aa)
-            DLS2F_flatten_aa = Flatten()(DLS2F_pool_aa)
-            DLS2F_convs_aa.append(DLS2F_flatten_aa)
+            if extra_fusion_CONV:
+                DLS2F_pool_aa = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_aa)
+                DLS2F_convs_aa.append(DLS2F_pool_aa)
+            else:
+                DLS2F_pool_aa = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_aa)
+                DLS2F_flatten_aa = Flatten()(DLS2F_pool_aa)
+                DLS2F_convs_aa.append(DLS2F_flatten_aa)
         # TWO STREAM
         for fsz in filter_sizes:
             DLS2F_conv_rest = DLS2F_input_rest
             for i in range(0,nb_layers):
                 DLS2F_conv_rest = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=fsz, subsample=1,use_bias=use_bias)(DLS2F_conv_rest)
             
-            DLS2F_pool_rest = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_rest)
-            DLS2F_flatten_rest = Flatten()(DLS2F_pool_rest)
-            DLS2F_convs_rest.append(DLS2F_flatten_rest)
+            if extra_fusion_CONV:
+                DLS2F_pool_rest = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_rest)
+                DLS2F_convs_rest.append(DLS2F_pool_rest)
+            else:
+                DLS2F_pool_rest = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_rest)
+                DLS2F_flatten_rest = Flatten()(DLS2F_pool_rest)
+                DLS2F_convs_rest.append(DLS2F_flatten_rest)
 
         if extra_fusion_FC:
             # TWO STREAM
@@ -269,17 +277,29 @@ def DLS2F_construct_withaa_complex_win_filter_layer_opt(win_array,ktop_node,outp
                 DLS2F_dropout_aa_two_stream = Dropout(0.2)(DLS2F_dense_aa_two_stream)
                 DLS2F_dropout_rest_two_stream = Dropout(0.2)(DLS2F_dense_rest_two_stream)
                 
-                DLS2F_out = Merge(mode='concat')([DLS2F_dropout_aa_two_stream, DLS2F_dropout_rest_two_stream])
+                DLS2F_out = Merge(mode='concat')(DLS2F_dropout_aa_two_stream + DLS2F_dropout_rest_two_stream)
             else:
                 DLS2F_out = DLS2F_convs[0]  
 
         else:
             if len(filter_sizes)>1:
-                DLS2F_out = Merge(mode='concat')([DLS2F_convs_aa, DLS2F_convs_rest])
+                DLS2F_convs = DLS2F_convs_aa + DLS2F_convs_rest
+                DLS2F_out = Merge(mode='concat')(DLS2F_convs)
             else:
                 DLS2F_out = DLS2F_convs[0]  
+
+        if extra_fusion_CONV:
+            DLS2F_conv_extra = DLS2F_out
+            for i in range(0,nb_layers):
+                DLS2F_conv_extra = _conv_bn_relu1D(nb_filter=nb_filters, nb_row=6, subsample=1,use_bias=use_bias)(DLS2F_conv_extra)
+            DLS2F_pool_extra = K_max_pooling1d(ktop=ktop_node)(DLS2F_conv_extra)
+            DLS2F_flatten_extra = Flatten()(DLS2F_pool_extra)
+
+            DLS2F_dense1_two_stream = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_flatten_extra) # changed on 20170314 to check if can visualzie better
+        else:
+            DLS2F_dense1_two_stream = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_out) # changed on 20170314 to check if can visualzie better
+        
         # TWO STREAM
-        DLS2F_dense1_two_stream = Dense(output_dim=hidden_num, init='he_normal', activation=hidden_type, W_constraint=maxnorm(3))(DLS2F_out) # changed on 20170314 to check if can visualzie better
         DLS2F_dropout1_two_stream = Dropout(0.2)(DLS2F_dense1_two_stream)
         DLS2F_output_two_stream = Dense(output_dim=output_dim, init="he_normal", activation="softmax")(DLS2F_dropout1_two_stream)
         DLS2F_ResCNN_two_stream = Model(input=[DLS2F_input_aa, DLS2F_input_rest], output=DLS2F_output_two_stream) 
